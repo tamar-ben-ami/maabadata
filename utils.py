@@ -1,7 +1,9 @@
 import pandas as pd
+import geopandas as gpd
 import numpy as np
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
+
 
 def date_features(df):
     df["cont_date_dt"] = pd.to_datetime(df.CONT_DATE, origin="julian",
@@ -32,3 +34,10 @@ def date_features(df):
                 "time_to_cont"]
 
     return features
+
+
+def df_to_gdf(df):
+    gdf = gpd.GeoDataFrame(
+        df, geometry=gpd.points_from_xy(df.LONGITUDE, df.LATITUDE), crs=4269)
+    gdf = gdf.to_crs(4326)
+    return gdf
