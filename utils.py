@@ -41,3 +41,15 @@ def df_to_gdf(df):
         df, geometry=gpd.points_from_xy(df.LONGITUDE, df.LATITUDE), crs=4269)
     gdf = gdf.to_crs(4326)
     return gdf
+
+
+def feature_extraction_noa(df):
+    # add dummies
+    dummy_cols = ["NWCG_REPORTING_AGENCY", "SOURCE_SYSTEM_TYPE"]
+    if "Shape" in df.columns:
+        df.drop(columns=["Shape"], inplace=True)
+    df = pd.get_dummies(df,columns=dummy_cols)
+    # encode of FIRE_SIZE_CLASS feature
+    df["FIRE_SIZE_CLASS"] = df["FIRE_SIZE_CLASS"].map({"A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F" : 6, "G":7})
+    return df
+
