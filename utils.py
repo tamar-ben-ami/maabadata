@@ -1,6 +1,7 @@
 import pandas as pd
 import geopandas as gpd
 import numpy as np
+import requests
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
 
@@ -53,3 +54,17 @@ def feature_extraction_noa(df):
     df["FIRE_SIZE_CLASS"] = df["FIRE_SIZE_CLASS"].map({"A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F" : 6, "G":7})
     return df
 
+
+def get_elevation(gdf):
+    url = "https://api.opentopodata.org/v1/ned10m"
+    elavation_dfs = []
+    all_coords_str = gdf.geometry.y.astype(str) + "," + gdf.geometry.x.astype(str)
+    for i in range(0, len(all_coords_str), 100):
+        coords = '|'.join(all_coords_str[i:i + 100])
+        data = {
+            "locations": coords,
+            "interpolation": "cubic"
+        }
+        response = requests.post(url, json=data)
+        elavation_dfs.append(pd.json_normalize(response.json(), "results"))
+    return pd.concat(elavation_dfs)['elevation']
