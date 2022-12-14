@@ -2,8 +2,21 @@ import pandas as pd
 import geopandas as gpd
 import numpy as np
 import requests
+import sqlite3
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
+
+
+def create_dataframe():
+    conn = sqlite3.connect('FPA_FOD_20170508.sqlite')
+    query = """
+    select a.*, "POLYGON ((" || b.xmin || " " || b.ymin || ", " || b.xmax || " " || b.ymin || ", " || b.xmax || " " || b.ymax || ", " || b.xmin || " " || b.ymax || ", " || b.xmin || " " || b.ymin || "))" wkt
+    from Fires a
+    join idx_Fires_Shape b
+    on a.OBJECTID = b.pkid
+    """
+    df = pd.read_sql_query(query, conn)
+    return df
 
 
 def date_features(df):
