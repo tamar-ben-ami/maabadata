@@ -6,6 +6,7 @@ import sqlite3
 from shapely.wkt import loads
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
+OID_FIELD = "OBJECTID"
 
 
 def create_dataframe():
@@ -50,6 +51,23 @@ def date_features(df):
 
     return features
 
+
+def geo_vector_features(gdf, external_vector_gdfs):
+    features = []
+    for external_gdf, name_of_data, geo_oid_field in external_vector_gdfs:
+        gdf[f"distances_{name_of_data}"] = \
+        gpd.sjoin_nearest(gdf, external_gdf, how='left', lsuffix='left',
+                          rsuffix='right',
+                          distance_col=f"distances_{name_of_data}")[
+            f"distances_{name_of_data}"]
+        features.append(f"distances_{name_of_data}")
+        # Gdf with polygons!
+        gs = gpd.sjoin(gdf, external_gdf, how='left', predicate="intersects",
+                  lsuffix='left', rsuffix='right').groupby(
+            OID_FIELD).geo_oid_field.size().rename(f"count_intersections_{name_of_data}")
+        gdf = gdf.merge(gs, how="left", left_on=OID_FIELD, right_index=True)
+        features.append(f"count_intersections_{name_of_data}")
+    return features
 
 def df_to_gdf(df):
     gdf = gpd.GeoDataFrame(
