@@ -3,6 +3,7 @@ import geopandas as gpd
 import numpy as np
 import requests
 import sqlite3
+from shapely.wkt import loads
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
 
@@ -10,7 +11,7 @@ LABEL_FIELD = "STAT_CAUSE_CODE"
 def create_dataframe():
     conn = sqlite3.connect('FPA_FOD_20170508.sqlite')
     query = """
-    select a.*, "POLYGON ((" || b.xmin || " " || b.ymin || ", " || b.xmax || " " || b.ymin || ", " || b.xmax || " " || b.ymax || ", " || b.xmin || " " || b.ymax || ", " || b.xmin || " " || b.ymin || "))" wkt
+    select a.*, "POLYGON ((" || b.xmin || " " || b.ymin || ", " || b.xmax || " " || b.ymin || ", " || b.xmax || " " || b.ymax || ", " || b.xmin || " " || b.ymax || ", " || b.xmin || " " || b.ymin || "))" BOX_GEOMETRY
     from Fires a
     join idx_Fires_Shape b
     on a.OBJECTID = b.pkid
@@ -54,6 +55,10 @@ def df_to_gdf(df):
     gdf = gpd.GeoDataFrame(
         df, geometry=gpd.points_from_xy(df.LONGITUDE, df.LATITUDE), crs=4269)
     gdf = gdf.to_crs(4326)
+    gdf['LATITUDE'] = gdf.geometry.y
+    gdf['LONGITUDE'] = gdf.geometry.x
+    gdf['POINT_GEOMETRY'] = gdf.geometry
+    gdf['BOX_GEOMETRY'] = gpd.GeoSeries(gdf['BOX_GEOMETRY'].apply(loads), crs=4269).to_crs(4326)
     return gdf
 
 
