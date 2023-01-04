@@ -51,6 +51,13 @@ def date_features(df):
 
     return features
 
+def aggregative_features(df):
+    # frequency of a month
+    months = df["disc_mon"].value_counts().reset_index().rename(columns={"index": "disc_mon", "disc_mon": "amount"})
+    months["frequency"] = months["amount"] / df.shape[0]
+    df = pd.merge(df, months, left_on=["disc_mon"], right_on=["disc_mon"])
+    features = ["month_frequency"]
+    return df
 
 def geo_vector_features(gdf, external_vector_gdfs):
     features = []
