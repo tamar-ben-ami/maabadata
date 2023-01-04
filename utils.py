@@ -71,9 +71,27 @@ def geo_vector_features(gdf, external_vector_gdfs):
         # Gdf with polygons!
         gs = gpd.sjoin(gdf, external_gdf, how='left', predicate="intersects",
                   lsuffix='left', rsuffix='right').groupby(
-            OID_FIELD).geo_oid_field.size().rename(f"count_intersections_{name_of_data}")
+            OID_FIELD)[geo_oid_field].size().rename(f"count_intersections_{name_of_data}")
         gdf = gdf.merge(gs, how="left", left_on=OID_FIELD, right_index=True)
         features.append(f"count_intersections_{name_of_data}")
+    return features
+
+def aggregative_features(train_df, test_df):
+    features = ["state_county_gb", "state_gb"]
+    train_df["STATE_COUNTY"] = train_df["STATE"] + "_" + train_df["COUNTY"]
+    test_df["STATE_COUNTY"] = test_df["STATE"] + "_" + test_df["COUNTY"]
+    gb_state_county = train_df.groupby("STATE_COUNTY").size().rename(
+        "state_county_gb")
+    train_df["state_county_gb"] = train_df.merge(gb_state_county, how="left", right_index=True,
+                  left_on="STATE_COUNTY")["state_county_gb"]
+    test_df["state_county_gb"] = test_df.merge(gb_state_county, how="left", right_index=True,
+                  left_on="STATE_COUNTY")["state_county_gb"]
+
+    gb_state = train_df.groupby("STATE").size().rename("state_gb")
+    train_df["state_gb"] = train_df.merge(gb_state, how="left", right_index=True,
+                  left_on="STATE")["state_gb"]
+    test_df["state_gb"] = test_df.merge(gb_state, how="left", right_index=True,
+                  left_on="STATE")["state_gb"]
     return features
 
 def df_to_gdf(df):
