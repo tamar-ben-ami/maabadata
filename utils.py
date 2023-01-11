@@ -1,9 +1,12 @@
 import pandas as pd
 import geopandas as gpd
 import numpy as np
+import rasterio
 import requests
 import sqlite3
 from shapely.wkt import loads
+from config import *
+import os
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
 OID_FIELD = "OBJECTID"
@@ -129,3 +132,25 @@ def get_elevation(gdf):
         response = requests.post(url, json=data)
         elavation_dfs.append(pd.json_normalize(response.json(), "results"))
     return pd.concat(elavation_dfs)['elevation']
+
+
+def weather_normal_features(gdf, data_path):
+    raster_files = {}
+    for feat, dir_name in WEATHER_FEATURES_MAP.items():
+        raster_files[feat] = {}
+        for i in range(1, 13):
+            month = str(i) if i >= 10 else f'0{i}'
+            bil_file = os.path.join(data_path, dir_name, WEATHER_FILES_MAP[dir_name].format(month))
+            raster_files[feat][month] = rasterio.open(bil_file)
+
+    def create_weather_features(row):
+        month_str = row['DISCOVERY_DATE'].strftime("%m")
+        results = []
+        for feature in WEATHER_FEATURES_MAP:
+            data_value = list(raster_files[feature][month_str].sample([(row['LONGITUDE_NAD83'], row['LATITUDE_NAD83'])]))
+            results.append(data_value[0][0])
+        return results
+
+    gdf[list(WEATHER_FEATURES_MAP.keys())] = gdf.apply(create_weather_features, axis=1, result_type='expand')
+
+
