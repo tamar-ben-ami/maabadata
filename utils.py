@@ -7,6 +7,10 @@ import sqlite3
 from shapely.wkt import loads
 from config import *
 import os
+from sklearn.model_selection import train_test_split
+from sklearn.ensemble import RandomForestClassifier
+from sklearn.metrics import classification_report
+
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
 OID_FIELD = "OBJECTID"
@@ -62,7 +66,7 @@ def aggregative_features(df):
     features = ["month_frequency"]
     return df
 
-def geo_vector_features(gdf, external_vector_gdfs):
+def geo_vector_features(gdf, external_vector_gdfs, is_poly=False):
     features = []
     for external_gdf, name_of_data, geo_oid_field in external_vector_gdfs:
         gdf[f"distances_{name_of_data}"] = \
@@ -72,11 +76,12 @@ def geo_vector_features(gdf, external_vector_gdfs):
             f"distances_{name_of_data}"]
         features.append(f"distances_{name_of_data}")
         # Gdf with polygons!
-        gs = gpd.sjoin(gdf, external_gdf, how='left', predicate="intersects",
-                  lsuffix='left', rsuffix='right').groupby(
-            OID_FIELD)[geo_oid_field].size().rename(f"count_intersections_{name_of_data}")
-        gdf = gdf.merge(gs, how="left", left_on=OID_FIELD, right_index=True)
-        features.append(f"count_intersections_{name_of_data}")
+        if is_poly:
+            gs = gpd.sjoin(gdf, external_gdf, how='left', predicate="intersects",
+                      lsuffix='left', rsuffix='right').groupby(
+                OID_FIELD)[geo_oid_field].size().rename(f"count_intersections_{name_of_data}")
+            gdf = gdf.merge(gs, how="left", left_on=OID_FIELD, right_index=True)
+            features.append(f"count_intersections_{name_of_data}")
     return features
 
 def aggregative_features(train_df, test_df):
@@ -154,3 +159,21 @@ def weather_normal_features(gdf, data_path):
     gdf[list(WEATHER_FEATURES_MAP.keys())] = gdf.apply(create_weather_features, axis=1, result_type='expand')
 
 
+def run_model(df):
+    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY"]
+    date_features_lst = date_features(df)
+
+    X, y = df[date_features_lst + basic_features_lst], df[LABEL_FIELD]
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
+    aggregative_features(X_train, X_test)
+    X_train.drop(columns=["STATE", "COUNTY", "STATE_COUNTY"], inplace=True)
+    X_test.drop(columns=["STATE", "COUNTY", "STATE_COUNTY"], inplace=True)
+
+    clf_multi = RandomForestClassifier()
+    clf_multi.fit(X_train, y_train)
+
+    print("train score ", clf_multi.score(X_train, y_train))
+    print("test score ", clf_multi.score(X_test, y_test))
+
+    y_test, preds = y_test, clf_multi.predict(X_test)
+    print(classification_report(y_test, preds))
