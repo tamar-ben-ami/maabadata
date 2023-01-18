@@ -1,7 +1,7 @@
 import pandas as pd
 import geopandas as gpd
 import numpy as np
-import rasterio
+# import rasterio
 import requests
 import sqlite3
 from shapely.wkt import loads
@@ -66,7 +66,8 @@ def aggregative_features(df):
     features = ["month_frequency"]
     return df
 
-def geo_vector_features(gdf, external_vector_gdfs, is_poly=False):
+def geo_vector_features(df, external_vector_gdfs, is_poly=False):
+    gdf = df_to_gdf(df)
     features = []
     for external_gdf, name_of_data, geo_oid_field in external_vector_gdfs:
         gdf[f"distances_{name_of_data}"] = \
@@ -75,13 +76,15 @@ def geo_vector_features(gdf, external_vector_gdfs, is_poly=False):
                           distance_col=f"distances_{name_of_data}")[
             f"distances_{name_of_data}"]
         features.append(f"distances_{name_of_data}")
+        df[f"distances_{name_of_data}"] = df[[OID_FIELD]].merge(gdf[[OID_FIELD, f"distances_{name_of_data}"]], left_on=OID_FIELD, right_on=OID_FIELD)[f"distances_{name_of_data}"]
         # Gdf with polygons!
-        if is_poly:
-            gs = gpd.sjoin(gdf, external_gdf, how='left', predicate="intersects",
-                      lsuffix='left', rsuffix='right').groupby(
-                OID_FIELD)[geo_oid_field].size().rename(f"count_intersections_{name_of_data}")
-            gdf = gdf.merge(gs, how="left", left_on=OID_FIELD, right_index=True)
-            features.append(f"count_intersections_{name_of_data}")
+        # if is_poly:
+        #     gs = gpd.sjoin(gdf, external_gdf, how='left', predicate="intersects",
+        #               lsuffix='left', rsuffix='right').groupby(
+        #         OID_FIELD)[geo_oid_field].size().rename(f"count_intersections_{name_of_data}")
+        #     gdf = gdf.merge(gs, how="left", left_on=OID_FIELD, right_index=True)
+        #     features.append(f"count_intersections_{name_of_data}")
+
     return features
 
 def aggregative_features(train_df, test_df):
@@ -109,7 +112,7 @@ def df_to_gdf(df):
     gdf['LATITUDE'] = gdf.geometry.y
     gdf['LONGITUDE'] = gdf.geometry.x
     gdf['POINT_GEOMETRY'] = gdf.geometry
-    gdf['BOX_GEOMETRY'] = gpd.GeoSeries(gdf['BOX_GEOMETRY'].apply(loads), crs=4269).to_crs(4326)
+    # gdf['BOX_GEOMETRY'] = gpd.GeoSeries(gdf['BOX_GEOMETRY'].apply(loads), crs=4269).to_crs(4326)
     return gdf
 
 
@@ -177,3 +180,13 @@ def run_model(df):
 
     y_test, preds = y_test, clf_multi.predict(X_test)
     print(classification_report(y_test, preds))
+
+
+def print_feature_importance(rf_model):
+    importances = rf_model.feature_importances_
+    sorted_indices = np.argsort(importances)[::-1]
+    feat_labels = list(rf_model.feature_names_in_)
+    for f in range(len(feat_labels)):
+        print("%2d) %-*s %f" % (f + 1, 30,
+                                feat_labels[sorted_indices[f]],
+                                importances[sorted_indices[f]]))
