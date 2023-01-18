@@ -87,23 +87,26 @@ def geo_vector_features(df, external_vector_gdfs, is_poly=False):
 
     return features
 
-def aggregative_features(train_df, test_df):
+def state_county_features_train(train_df):
     features = ["state_county_gb", "state_gb"]
     train_df["STATE_COUNTY"] = train_df["STATE"] + "_" + train_df["COUNTY"]
-    test_df["STATE_COUNTY"] = test_df["STATE"] + "_" + test_df["COUNTY"]
     gb_state_county = train_df.groupby("STATE_COUNTY").size().rename(
         "state_county_gb")
     train_df["state_county_gb"] = train_df.merge(gb_state_county, how="left", right_index=True,
                   left_on="STATE_COUNTY")["state_county_gb"]
-    test_df["state_county_gb"] = test_df.merge(gb_state_county, how="left", right_index=True,
-                  left_on="STATE_COUNTY")["state_county_gb"]
-
     gb_state = train_df.groupby("STATE").size().rename("state_gb")
     train_df["state_gb"] = train_df.merge(gb_state, how="left", right_index=True,
                   left_on="STATE")["state_gb"]
-    test_df["state_gb"] = test_df.merge(gb_state, how="left", right_index=True,
-                  left_on="STATE")["state_gb"]
     return features
+
+def state_county_features_test(test_df, train_df):
+    test_df["STATE_COUNTY"] = test_df["STATE"] + "_" + test_df["COUNTY"]
+    test_df["state_county_gb"] = test_df.merge(train_df[["state_county_gb"]] , how="left", right_index=True,
+                  left_on="STATE_COUNTY")["state_county_gb"]
+    test_df["state_gb"] = test_df.merge(train_df[["state_gb"]], how="left", right_index=True,
+                  left_on="STATE")["state_gb"]
+    return ["state_county_gb", "state_gb"]
+
 
 def df_to_gdf(df):
     gdf = gpd.GeoDataFrame(
@@ -161,6 +164,15 @@ def weather_normal_features(gdf, data_path):
 
     gdf[list(WEATHER_FEATURES_MAP.keys())] = gdf.apply(create_weather_features, axis=1, result_type='expand')
 
+def extract_features(df, train_df=None):
+    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY"]
+    date_features_lst = date_features(df)
+    if train_df:
+        state_county_features = state_county_features_test(df, train_df)
+    else:
+        state_county_features = state_county_features_train(df)
+    return basic_features_lst + date_features_lst + state_county_features
+
 
 def run_model(df):
     basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY"]
@@ -168,7 +180,7 @@ def run_model(df):
 
     X, y = df[date_features_lst + basic_features_lst], df[LABEL_FIELD]
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
-    aggregative_features(X_train, X_test)
+    # aggregative_features(X_train, X_test)
     X_train.drop(columns=["STATE", "COUNTY", "STATE_COUNTY"], inplace=True)
     X_test.drop(columns=["STATE", "COUNTY", "STATE_COUNTY"], inplace=True)
 
