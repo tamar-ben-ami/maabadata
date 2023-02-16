@@ -9,9 +9,9 @@ from config import *
 import os
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, make_scorer, balanced_accuracy_score
+from sklearn.metrics import classification_report, make_scorer, \
+    balanced_accuracy_score
 from scipy.stats import randint
-
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
 OID_FIELD = "OBJECTID"
@@ -67,16 +67,37 @@ def date_features(df):
     return features
 
 
-def aggregative_features(df):
+def aggregative_features_train(train_gdf):
     # frequency per month
-    months_stats = df["disc_mon"].value_counts().reset_index().rename(columns={"index":"disc_mon", "disc_mon":"month_freq"})
-    months_stats["month_freq"] = months_stats["month_freq"] / df.shape[0]
-    df = pd.merge(df, months_stats, left_on = ["disc_mon"], right_on = ["disc_mon"])
+    months_stats = train_gdf["disc_mon"].value_counts().reset_index().rename(
+        columns={"index": "disc_mon", "disc_mon": "month_freq"})
+    months_stats["month_freq"] = months_stats["month_freq"] / train_gdf.shape[
+        0]
+    train_gdf['month_freq'] = \
+    pd.merge(train_gdf, months_stats, left_on=["disc_mon"],
+             right_on=["disc_mon"])['month_freq']
     # frquency per day of week
-    weekday_stats = df["disc_dow"].value_counts().reset_index().rename(columns={"index":"disc_dow", "disc_dow":"weekday_freq"})
-    weekday_stats["weekday_freq"] = weekday_stats["weekday_freq"] / df.shape[0]
-    df = pd.merge(df, weekday_stats, left_on = ["disc_dow"], right_on = ["disc_dow"])
-    return df
+    weekday_stats = train_gdf["disc_dow"].value_counts().reset_index().rename(
+        columns={"index": "disc_dow", "disc_dow": "weekday_freq"})
+    weekday_stats["weekday_freq"] = weekday_stats["weekday_freq"] / \
+                                    train_gdf.shape[0]
+    train_gdf['weekday_freq'] = \
+    pd.merge(train_gdf, weekday_stats, left_on=["disc_dow"],
+             right_on=["disc_dow"])['weekday_freq']
+    return ['month_freq', 'weekday_freq']
+
+
+def aggregative_features_test(test_gdf, train_gdf):
+    test_gdf['month_freq'] = \
+        pd.merge(test_gdf, train_gdf[['disc_mon', 'month_freq']].drop_duplicates(), left_on=["disc_mon"],
+                 right_on=["disc_mon"])['month_freq']
+
+    test_gdf['weekday_freq'] = \
+        pd.merge(test_gdf, train_gdf[['disc_dow', 'weekday_freq']].drop_duplicates(),
+                 left_on=["disc_dow"],
+                 right_on=["disc_dow"])['weekday_freq']
+
+    return ['month_freq', 'weekday_freq']
 
 
 def geo_vector_features(df, external_vector_gdfs, is_poly=False):
@@ -90,9 +111,10 @@ def geo_vector_features(df, external_vector_gdfs, is_poly=False):
                 f"distances_{name_of_data}"]
         features.append(f"distances_{name_of_data}")
         df[f"distances_{name_of_data}"] = \
-        df[[OID_FIELD]].merge(gdf[[OID_FIELD, f"distances_{name_of_data}"]],
-                              left_on=OID_FIELD, right_on=OID_FIELD)[
-            f"distances_{name_of_data}"]
+            df[[OID_FIELD]].merge(
+                gdf[[OID_FIELD, f"distances_{name_of_data}"]],
+                left_on=OID_FIELD, right_on=OID_FIELD)[
+                f"distances_{name_of_data}"]
         # Gdf with polygons!
         # if is_poly:
         #     gs = gpd.sjoin(gdf, external_gdf, how='left', predicate="intersects",
@@ -111,24 +133,27 @@ def state_county_features_train(train_df):
         "STATE_COUNTY").size().rename(
         "state_county_gb")
     train_df["state_county_gb"] = \
-    train_df.merge(gb_state_county, how="left", right_index=True,
-                   left_on="STATE_COUNTY")["state_county_gb"]
+        train_df.merge(gb_state_county, how="left", right_index=True,
+                       left_on="STATE_COUNTY")["state_county_gb"]
     gb_state = train_df[['STATE', OID_FIELD]].groupby("STATE").size().rename(
         "state_gb")
     train_df["state_gb"] = \
-    train_df.merge(gb_state, how="left", right_index=True,
-                   left_on="STATE")["state_gb"]
+        train_df.merge(gb_state, how="left", right_index=True,
+                       left_on="STATE")["state_gb"]
     return features
 
 
 def state_county_features_test(test_gdf, train_gdf):
     test_gdf["STATE_COUNTY"] = test_gdf["STATE"] + "_" + test_gdf["COUNTY"]
     test_gdf["state_county_gb"] = \
-    test_gdf.merge(train_gdf[["STATE_COUNTY", "state_county_gb"]].drop_duplicates(), how="left",
-                   on="STATE_COUNTY")["state_county_gb"]
+        test_gdf.merge(
+            train_gdf[["STATE_COUNTY", "state_county_gb"]].drop_duplicates(),
+            how="left",
+            on="STATE_COUNTY")["state_county_gb"]
     test_gdf["state_gb"] = \
-    test_gdf.merge(train_gdf[["state_gb", 'STATE']].drop_duplicates(), how="left", on="STATE")[
-        "state_gb"]
+        test_gdf.merge(train_gdf[["state_gb", 'STATE']].drop_duplicates(),
+                       how="left", on="STATE")[
+            "state_gb"]
     return ["state_county_gb", "state_gb"]
 
 
@@ -196,10 +221,10 @@ def print_feature_importance(rf_model):
                                 importances[sorted_indices[f]]))
 
 
-
 def extract_features_train(train_gdf):
     """function performs all basic data manipulations that are needed on both train and test dataframe"""
-    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY", "FIRE_SIZE"]#, "FIRE_SIZE_CLASS"]
+    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY",
+                          "FIRE_SIZE"]  # , "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(train_gdf)
     state_county_features = state_county_features_train(train_gdf)
     return basic_features_lst + date_features_lst + state_county_features
@@ -207,7 +232,8 @@ def extract_features_train(train_gdf):
 
 def extract_features_test(test_gdf, train_gdf):
     """function performs all basic data manipulations that are needed on both train and test dataframe"""
-    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY", "FIRE_SIZE"]#, "FIRE_SIZE_CLASS"]
+    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY",
+                          "FIRE_SIZE"]  # , "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(test_gdf)
     state_county_features = state_county_features_test(test_gdf, train_gdf)
     return basic_features_lst + date_features_lst + state_county_features
@@ -222,13 +248,17 @@ def fit_model(X, y):
         'min_samples_split': randint(2, 32)
     }
 
-    rs = RandomizedSearchCV(estimator=model, param_distributions=dists, cv=5, verbose=1, scoring=make_scorer(balanced_accuracy_score), n_iter=n_configs)
+    rs = RandomizedSearchCV(estimator=model, param_distributions=dists, cv=5,
+                            verbose=1,
+                            scoring=make_scorer(balanced_accuracy_score),
+                            n_iter=n_configs)
     rs.fit(X, y)
     return rs.best_estimator_
 
 
 def predict_results(X_test, model):
     return model.predict
+
 
 def main():
     # fill me
