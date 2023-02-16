@@ -12,6 +12,8 @@ from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report, make_scorer, \
     balanced_accuracy_score
 from scipy.stats import randint
+import plotly.express as px
+
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
 OID_FIELD = "OBJECTID"
@@ -100,19 +102,31 @@ def aggregative_features_test(test_gdf, train_gdf):
     return ['month_freq', 'weekday_freq']
 
 
-def geo_vector_features(gdf):
+def geo_vector_features(df, external_vector_gdfs, is_poly=False):
+    gdf = df_to_gdf(df)
     features = []
-    for name_of_data in LAYERS:
-        features.append(name_of_data)
-        print(name_of_data)
-        path = os.path.join(DATA_PATH, LAYERS[name_of_data])
-        external_gdf = gpd.read_file(path, crs="EPSG:4326")[['geometry']].drop_duplicates()
-        distances = gpd.sjoin_nearest(gdf, external_gdf, how='left', lsuffix='left',
-                                      rsuffix='right',
-                                      distance_col=f"distances_{name_of_data}")
-        distances.drop_duplicates(subset=[OID_FIELD], inplace=True)
-        gdf = gdf.merge(distances[[OID_FIELD, f"distances_{name_of_data}"]], on=OID_FIELD, how='left')
-    return gdf, features
+    for external_gdf, name_of_data, geo_oid_field in external_vector_gdfs:
+        gdf[f"distances_{name_of_data}"] = \
+            gpd.sjoin_nearest(gdf, external_gdf, how='left', lsuffix='left',
+                              rsuffix='right',
+                              distance_col=f"distances_{name_of_data}")[
+                f"distances_{name_of_data}"]
+        features.append(f"distances_{name_of_data}")
+        df[f"distances_{name_of_data}"] = \
+            df[[OID_FIELD]].merge(
+                gdf[[OID_FIELD, f"distances_{name_of_data}"]],
+                left_on=OID_FIELD, right_on=OID_FIELD)[
+                f"distances_{name_of_data}"]
+        # Gdf with polygons!
+        # if is_poly:
+        #     gs = gpd.sjoin(gdf, external_gdf, how='left', predicate="intersects",
+        #               lsuffix='left', rsuffix='right').groupby(
+        #         OID_FIELD)[geo_oid_field].size().rename(f"count_intersections_{name_of_data}")
+        #     gdf = gdf.merge(gs, how="left", left_on=OID_FIELD, right_index=True)
+        #     features.append(f"count_intersections_{name_of_data}")
+
+    return features
+
 
 def state_county_features_train(train_df):
     features = ["state_county_gb", "state_gb"]
@@ -178,34 +192,37 @@ def get_elevation(gdf):
     return pd.concat(elavation_dfs)['elevation']
 
 
-def weather_normal_features(gdf):
+def weather_normal_features(gdf, data_path):
     raster_files = {}
     for feat, dir_name in WEATHER_FEATURES_MAP.items():
         raster_files[feat] = {}
         for i in range(1, 13):
             month = str(i) if i >= 10 else f'0{i}'
-            bil_file = os.path.join(DATA_PATH, dir_name, WEATHER_FILES_MAP[dir_name].format(month))
+            bil_file = os.path.join(data_path, dir_name,
+                                    WEATHER_FILES_MAP[dir_name].format(month))
             raster_files[feat][month] = rasterio.open(bil_file)
 
-    def create_weather_features(row):
-        month_str = row['DISCOVERY_DATE'].strftime("%m")
-        results = []
-        for feature in WEATHER_FEATURES_MAP:
-            data_value = list(raster_files[feature][month_str].sample([(row['LONGITUDE_NAD83'], row['LATITUDE_NAD83'])]))
-            results.append(data_value[0][0])
-        return results
 
-    gdf[list(WEATHER_FEATURES_MAP.keys())] = gdf.apply(create_weather_features, axis=1, result_type='expand')
+def create_weather_features(row):
+    month_str = row['DISCOVERY_DATE'].strftime("%m")
+    results = []
+    for feature in WEATHER_FEATURES_MAP:
+        data_value = list(raster_files[feature][month_str].sample(
+            [(row['LONGITUDE_NAD83'], row['LATITUDE_NAD83'])]))
+        results.append(data_value[0][0])
+    return results
 
 
-def print_feature_importance(rf_model):
-    importances = rf_model.feature_importances_
+def plot_feature_importance(model):
+    importances = model.feature_importances_
     sorted_indices = np.argsort(importances)[::-1]
-    feat_labels = list(rf_model.feature_names_in_)
-    for f in range(len(feat_labels)):
-        print("%2d) %-*s %f" % (f + 1, 30,
-                                feat_labels[sorted_indices[f]],
-                                importances[sorted_indices[f]]))
+    feat_labels = list(model.feature_names_in_)
+
+    fi = pd.DataFrame({"labels": feat_labels, "importance": importances})
+    fi = fi.sort_values('importance')
+    fig = px.bar(fi, x='labels', y='importance', color='importance',
+                 height=400)
+    fig.show()
 
 
 def extract_features_train(train_gdf):
@@ -214,7 +231,10 @@ def extract_features_train(train_gdf):
                           "FIRE_SIZE"]  # , "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(train_gdf)
     state_county_features = state_county_features_train(train_gdf)
-    return basic_features_lst + date_features_lst + state_county_features
+    agg_features = aggregative_features_train(train_gdf)
+    basic_features_lst.remove("STATE")
+    basic_features_lst.remove("COUNTY")
+    return basic_features_lst + date_features_lst + state_county_features + agg_features
 
 
 def extract_features_test(test_gdf, train_gdf):
@@ -223,50 +243,22 @@ def extract_features_test(test_gdf, train_gdf):
                           "FIRE_SIZE"]  # , "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(test_gdf)
     state_county_features = state_county_features_test(test_gdf, train_gdf)
-    return basic_features_lst + date_features_lst + state_county_features
+    agg_features = aggregative_features_test(test_gdf, train_gdf)
+    basic_features_lst.remove("STATE")
+    basic_features_lst.remove("COUNTY")
+    return basic_features_lst + date_features_lst + state_county_features + agg_features
 
 
 def fit_model(X, y):
-    model = RandomForestClassifier(random_state=10)
-
-    dists = {
-        'n_estimators': randint(2, 256),
-        'min_samples_leaf': randint(2, 16),
-        'min_samples_split': randint(2, 32)
-    }
-
-    rs = RandomizedSearchCV(estimator=model, param_distributions=dists, cv=5,
-                            verbose=1,
-                            scoring=make_scorer(balanced_accuracy_score),
-                            n_iter=n_configs)
-    rs.fit(X, y)
-    return rs.best_estimator_
+    X = X.fillna(0)
+    model = RandomForestClassifier(random_state=10, min_samples_leaf=2,
+                                   min_samples_split=30, n_estimators=203)
+    model.fit(X, y)
+    return model
 
 
 def predict_results(X_test, model):
-    return model.predict
+    X_test = X_test.fillna(0)
+    return model.predict(X_test)
 
 
-def main():
-    # fill me
-    train_df = create_dataframe()
-    train_df = train_df[100:]
-    test_df = train_df[:100]
-    train_gdf, test_gdf = df_to_gdf(train_df), df_to_gdf(test_df)
-    train_features, test_features = extract_features_train(train_gdf), \
-                                    extract_features_test(test_gdf, train_gdf)
-    model = fit_model(train_gdf[train_features], train_gdf[LABEL_FIELD])
-    test_results = predict_results(test_gdf[test_features], model)
-
-# Noa:
-# Cont time
-# Exploratory Data Analysis
-# Document
-#
-# Tamar:
-# State County Features
-# Model
-#
-# Micha:
-# Geo Features + External Features
-# Geo Graphs for EDA
