@@ -58,6 +58,7 @@ def date_features(df):
 
     return features
 
+
 def aggregative_features(df):
     # frequency of a month
     months = df["disc_mon"].value_counts().reset_index().rename(columns={"index": "disc_mon", "disc_mon": "amount"})
@@ -68,6 +69,7 @@ def aggregative_features(df):
 
 def geo_vector_features(df, external_vector_gdfs, is_poly=False):
     gdf = df_to_gdf(df)
+
     features = []
     for external_gdf, name_of_data, geo_oid_field in external_vector_gdfs:
         gdf[f"distances_{name_of_data}"] = \
@@ -87,6 +89,7 @@ def geo_vector_features(df, external_vector_gdfs, is_poly=False):
 
     return features
 
+
 def aggregative_features(train_df, test_df):
     features = ["state_county_gb", "state_gb"]
     train_df["STATE_COUNTY"] = train_df["STATE"] + "_" + train_df["COUNTY"]
@@ -105,9 +108,13 @@ def aggregative_features(train_df, test_df):
                   left_on="STATE")["state_gb"]
     return features
 
+
 def df_to_gdf(df):
     gdf = gpd.GeoDataFrame(
         df, geometry=gpd.points_from_xy(df.LONGITUDE, df.LATITUDE), crs=4269)
+    gdf['LATITUDE_NAD83'] = gdf['LATITUDE']
+    gdf['LONGITUDE_NAD83'] = gdf['LONGITUDE']
+    gdf['POINT_GEOMETRY_NAD83'] = gdf.geometry
     gdf = gdf.to_crs(4326)
     gdf['LATITUDE'] = gdf.geometry.y
     gdf['LONGITUDE'] = gdf.geometry.x
@@ -152,7 +159,7 @@ def weather_normal_features(gdf, data_path):
             raster_files[feat][month] = rasterio.open(bil_file)
 
     def create_weather_features(row):
-        month_str = row['DISCOVERY_DATE'].strftime("%m")
+        month_str = row['disc_date_dt'].strftime("%m")
         results = []
         for feature in WEATHER_FEATURES_MAP:
             data_value = list(raster_files[feature][month_str].sample([(row['LONGITUDE_NAD83'], row['LATITUDE_NAD83'])]))
