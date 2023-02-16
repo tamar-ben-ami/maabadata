@@ -1,4 +1,5 @@
 DATA_PATH = r"C:\Users\Micha\Documents\HUJI\Competitive\Project\MapProject\Data"
+WEATHER_DATA_PATH = DATA_PATH + r"\WeatherNormal"
 
 LAYERS = {"electricity_transition_lines": r"Electricity\Electric__Power_Transmission_Lines_WGS84.shp",
           "electricity_power_plants": r"Electricity\Power_Plants_WGS84.shp",

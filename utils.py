@@ -1,7 +1,7 @@
 import pandas as pd
 import geopandas as gpd
 import numpy as np
-# import rasterio
+import rasterio
 import requests
 import sqlite3
 from shapely.wkt import loads
@@ -13,7 +13,6 @@ from sklearn.metrics import classification_report, make_scorer, \
     balanced_accuracy_score
 from scipy.stats import randint
 import plotly.express as px
-
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
 OID_FIELD = "OBJECTID"
@@ -76,16 +75,16 @@ def aggregative_features_train(train_gdf):
     months_stats["month_freq"] = months_stats["month_freq"] / train_gdf.shape[
         0]
     train_gdf['month_freq'] = \
-    pd.merge(train_gdf, months_stats, left_on=["disc_mon"],
-             right_on=["disc_mon"])['month_freq']
+        pd.merge(train_gdf, months_stats, left_on=["disc_mon"],
+                 right_on=["disc_mon"])['month_freq']
     # frquency per day of week
     weekday_stats = train_gdf["disc_dow"].value_counts().reset_index().rename(
         columns={"index": "disc_dow", "disc_dow": "weekday_freq"})
     weekday_stats["weekday_freq"] = weekday_stats["weekday_freq"] / \
                                     train_gdf.shape[0]
     train_gdf['weekday_freq'] = \
-    pd.merge(train_gdf, weekday_stats, left_on=["disc_dow"],
-             right_on=["disc_dow"])['weekday_freq']
+        pd.merge(train_gdf, weekday_stats, left_on=["disc_dow"],
+                 right_on=["disc_dow"])['weekday_freq']
     return ['month_freq', 'weekday_freq']
 
 
@@ -102,30 +101,19 @@ def aggregative_features_test(test_gdf, train_gdf):
     return ['month_freq', 'weekday_freq']
 
 
-def geo_vector_features(df, external_vector_gdfs, is_poly=False):
-    gdf = df_to_gdf(df)
+def geo_vector_features(gdf):
     features = []
-    for external_gdf, name_of_data, geo_oid_field in external_vector_gdfs:
-        gdf[f"distances_{name_of_data}"] = \
-            gpd.sjoin_nearest(gdf, external_gdf, how='left', lsuffix='left',
-                              rsuffix='right',
-                              distance_col=f"distances_{name_of_data}")[
-                f"distances_{name_of_data}"]
+    for name_of_data in LAYERS:
         features.append(f"distances_{name_of_data}")
-        df[f"distances_{name_of_data}"] = \
-            df[[OID_FIELD]].merge(
-                gdf[[OID_FIELD, f"distances_{name_of_data}"]],
-                left_on=OID_FIELD, right_on=OID_FIELD)[
-                f"distances_{name_of_data}"]
-        # Gdf with polygons!
-        # if is_poly:
-        #     gs = gpd.sjoin(gdf, external_gdf, how='left', predicate="intersects",
-        #               lsuffix='left', rsuffix='right').groupby(
-        #         OID_FIELD)[geo_oid_field].size().rename(f"count_intersections_{name_of_data}")
-        #     gdf = gdf.merge(gs, how="left", left_on=OID_FIELD, right_index=True)
-        #     features.append(f"count_intersections_{name_of_data}")
-
-    return features
+        print(name_of_data)
+        path = os.path.join(DATA_PATH, LAYERS[name_of_data])
+        external_gdf = gpd.read_file(path, crs="EPSG:4326")[['geometry']].drop_duplicates()
+        distances = gpd.sjoin_nearest(gdf, external_gdf, how='left', lsuffix='left',
+                                      rsuffix='right',
+                                      distance_col=f"distances_{name_of_data}")
+        distances.drop_duplicates(subset=[OID_FIELD], inplace=True)
+        gdf = gdf.merge(distances[[OID_FIELD, f"distances_{name_of_data}"]], on=OID_FIELD, how='left')
+    return gdf, features
 
 
 def state_county_features_train(train_df):
@@ -162,6 +150,9 @@ def state_county_features_test(test_gdf, train_gdf):
 def df_to_gdf(df):
     gdf = gpd.GeoDataFrame(
         df, geometry=gpd.points_from_xy(df.LONGITUDE, df.LATITUDE), crs=4269)
+    gdf['LATITUDE_NAD83'] = gdf['LATITUDE']
+    gdf['LONGITUDE_NAD83'] = gdf['LONGITUDE']
+    gdf['POINT_GEOMETRY_NAD83'] = gdf.geometry
     gdf = gdf.to_crs(4326)
     gdf['LATITUDE'] = gdf.geometry.y
     gdf['LONGITUDE'] = gdf.geometry.x
@@ -174,6 +165,81 @@ def fire_size_class_to_num(df):
     df["FIRE_SIZE_CLASS"] = df["FIRE_SIZE_CLASS"].map(
         {"A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F": 6, "G": 7})
     return df
+
+
+def fire_duration_feature(train_gdf):
+    # splitting train for empty and non empty rows
+    full_times = train_gdf.dropna(
+        subset=["disc_date_dt", "DISCOVERY_TIME", "cont_date_dt", "CONT_TIME"])
+
+    # creating date columns with hours
+    full_times["cont_timestamp"] = full_times["cont_date_dt"].astype(str) + " " + full_times[
+        "CONT_TIME"].astype(str).apply(lambda row: row[:2] + ":" + row[2:])
+    full_times["disc_timestamp"] = full_times["disc_date_dt"].astype(str) + " " + \
+                                   full_times["DISCOVERY_TIME"].astype(str).apply(
+                                       lambda row: row[:2] + ":" + row[2:])
+
+    full_times["cont_timestamp"] = pd.to_datetime(full_times["cont_timestamp"])
+    full_times["disc_timestamp"] = pd.to_datetime(full_times["disc_timestamp"])
+
+    # duration in minutes
+    full_times["fire_duration_min"] = full_times.apply(lambda row: pd.Timedelta(
+        row["cont_timestamp"] - row["disc_timestamp"]).seconds / 60.0,
+                                                       axis=1)
+    # calculating average per group [month, weekday ,state, fire size class]
+    group_cols = ["disc_mon", "disc_dow", "STATE", "FIRE_SIZE_CLASS"]
+    avg_df = full_times.groupby(group_cols).mean(["fire_duration_min"]).reset_index()
+
+    # merging averages and full times with train gdf
+    train_gdf["avg_fire_duration_min"] = train_gdf.merge(avg_df, on=group_cols, how='left')["fire_duration_min"]
+    train_gdf["fire_duration_min"] = train_gdf.join(full_times, lsuffix='_caller', rsuffix='_other')[
+        "fire_duration_min"]
+    train_gdf["fire_duration_min"] = train_gdf["fire_duration_min"].combine_first(train_gdf["avg_fire_duration_min"])
+
+    return ["fire_duration_min"]
+
+
+def fire_duration_feature_test(test_gdf, train_gdf):
+    # splitting test for empty and non empty rows
+    full_times = test_gdf.dropna(
+        subset=["disc_date_dt", "DISCOVERY_TIME", "cont_date_dt", "CONT_TIME"])
+
+    # creating date columns with hours
+    full_times["cont_timestamp"] = full_times["cont_date_dt"].astype(
+        str) + " " + full_times[
+                                       "CONT_TIME"].astype(str).apply(
+        lambda row: row[:2] + ":" + row[2:])
+    full_times["disc_timestamp"] = full_times["disc_date_dt"].astype(
+        str) + " " + \
+                                   full_times["DISCOVERY_TIME"].astype(
+                                       str).apply(
+                                       lambda row: row[:2] + ":" + row[2:])
+
+    full_times["cont_timestamp"] = pd.to_datetime(full_times["cont_timestamp"])
+    full_times["disc_timestamp"] = pd.to_datetime(full_times["disc_timestamp"])
+
+    # duration in minutes
+    full_times["fire_duration_min"] = full_times.apply(
+        lambda row: pd.Timedelta(
+            row["cont_timestamp"] - row["disc_timestamp"]).seconds / 60.0,
+        axis=1)
+
+    # calculating average per group [month, weekday ,state, fire size class]
+    group_cols = ["disc_mon", "disc_dow", "STATE", "FIRE_SIZE_CLASS"]
+
+    # calculating average on train df because it contains more info
+    avg_df = train_gdf.groupby(group_cols).mean(["fire_duration_min"]).reset_index()
+
+    # merging averages and full times with train gdf
+    test_gdf["avg_fire_duration_min"] = \
+        test_gdf.merge(avg_df, on=group_cols, how='left')["fire_duration_min"]
+    test_gdf["fire_duration_min"] = \
+        test_gdf.join(full_times, lsuffix='_caller', rsuffix='_other')[
+            "fire_duration_min"]
+    test_gdf["fire_duration_min"] = test_gdf[
+        "fire_duration_min"].combine_first(test_gdf["avg_fire_duration_min"])
+
+    return ["fire_duration_min"]
 
 
 def get_elevation(gdf):
@@ -192,25 +258,26 @@ def get_elevation(gdf):
     return pd.concat(elavation_dfs)['elevation']
 
 
-def weather_normal_features(gdf, data_path):
+def geo_raster_features(gdf):
     raster_files = {}
     for feat, dir_name in WEATHER_FEATURES_MAP.items():
         raster_files[feat] = {}
         for i in range(1, 13):
             month = str(i) if i >= 10 else f'0{i}'
-            bil_file = os.path.join(data_path, dir_name,
-                                    WEATHER_FILES_MAP[dir_name].format(month))
+            bil_file = os.path.join(WEATHER_DATA_PATH, dir_name, WEATHER_FILES_MAP[dir_name].format(month))
             raster_files[feat][month] = rasterio.open(bil_file)
 
+    def create_weather_features(row):
+        month_str = row['disc_date_dt'].strftime("%m")
+        results = []
+        for feature in WEATHER_FEATURES_MAP:
+            data_value = list(
+                raster_files[feature][month_str].sample([(row['LONGITUDE_NAD83'], row['LATITUDE_NAD83'])]))
+            results.append(data_value[0][0])
+        return results
 
-def create_weather_features(row):
-    month_str = row['DISCOVERY_DATE'].strftime("%m")
-    results = []
-    for feature in WEATHER_FEATURES_MAP:
-        data_value = list(raster_files[feature][month_str].sample(
-            [(row['LONGITUDE_NAD83'], row['LATITUDE_NAD83'])]))
-        results.append(data_value[0][0])
-    return results
+    gdf[list(WEATHER_FEATURES_MAP.keys())] = gdf.apply(create_weather_features, axis=1, result_type='expand')
+    return gdf, list(WEATHER_FEATURES_MAP.keys())
 
 
 def plot_feature_importance(model):
@@ -231,10 +298,16 @@ def extract_features_train(train_gdf):
                           "FIRE_SIZE"]  # , "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(train_gdf)
     state_county_features = state_county_features_train(train_gdf)
+    fire_duration = fire_duration_feature(train_gdf)
+    train_gdf, vector_features = geo_vector_features(train_gdf)
+    train_gdf, raster_features = geo_raster_features(train_gdf)
     agg_features = aggregative_features_train(train_gdf)
     basic_features_lst.remove("STATE")
     basic_features_lst.remove("COUNTY")
-    return basic_features_lst + date_features_lst + state_county_features + agg_features
+
+    features = basic_features_lst + date_features_lst + state_county_features + \
+               agg_features + raster_features + vector_features + fire_duration
+    return train_gdf, features
 
 
 def extract_features_test(test_gdf, train_gdf):
@@ -243,16 +316,23 @@ def extract_features_test(test_gdf, train_gdf):
                           "FIRE_SIZE"]  # , "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(test_gdf)
     state_county_features = state_county_features_test(test_gdf, train_gdf)
+    fire_duration = fire_duration_feature_test(test_gdf, train_gdf)
+    test_gdf, vector_features = geo_vector_features(test_gdf)
+    test_gdf, raster_features = geo_raster_features(test_gdf)
     agg_features = aggregative_features_test(test_gdf, train_gdf)
     basic_features_lst.remove("STATE")
     basic_features_lst.remove("COUNTY")
-    return basic_features_lst + date_features_lst + state_county_features + agg_features
+
+    features = basic_features_lst + date_features_lst + state_county_features + \
+               agg_features + raster_features + vector_features + fire_duration
+    return test_gdf, features
 
 
 def fit_model(X, y):
     X = X.fillna(0)
-    model = RandomForestClassifier(random_state=10, min_samples_leaf=2,
-                                   min_samples_split=30, n_estimators=203)
+    # model = RandomForestClassifier(random_state=10, min_samples_leaf=2,
+    #                                min_samples_split=30, n_estimators=203)
+    model = RandomForestClassifier(random_state=10)
     model.fit(X, y)
     return model
 
