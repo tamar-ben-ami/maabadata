@@ -9,7 +9,7 @@ from config import *
 import os
 from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report
+from sklearn.metrics import classification_report, make_scorer, balanced_accuracy_score
 from scipy.stats import randint
 
 
@@ -196,11 +196,12 @@ def print_feature_importance(rf_model):
                                 importances[sorted_indices[f]]))
 
 
+
 def extract_features_train(train_gdf):
     """function performs all basic data manipulations that are needed on both train and test dataframe"""
     basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY", "FIRE_SIZE"]#, "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(train_gdf)
-    state_county_features = []  # state_county_features_train(train_gdf)
+    state_county_features = state_county_features_train(train_gdf)
     return basic_features_lst + date_features_lst + state_county_features
 
 
@@ -208,7 +209,7 @@ def extract_features_test(test_gdf, train_gdf):
     """function performs all basic data manipulations that are needed on both train and test dataframe"""
     basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY", "FIRE_SIZE"]#, "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(test_gdf)
-    state_county_features = []  # state_county_features_test(test_gdf, train_gdf)
+    state_county_features = state_county_features_test(test_gdf, train_gdf)
     return basic_features_lst + date_features_lst + state_county_features
 
 
