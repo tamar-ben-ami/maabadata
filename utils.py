@@ -7,9 +7,11 @@ import sqlite3
 from shapely.wkt import loads
 from config import *
 import os
-from sklearn.model_selection import train_test_split
+from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.metrics import classification_report
+from scipy.stats import randint
+
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
 OID_FIELD = "OBJECTID"
@@ -119,13 +121,13 @@ def state_county_features_train(train_df):
     return features
 
 
-def state_county_features_test(test_df, train_df):
-    test_df["STATE_COUNTY"] = test_df["STATE"] + "_" + test_df["COUNTY"]
-    test_df["state_county_gb"] = \
-    test_df.merge(train_df[["STATE_COUNTY", "state_county_gb"]], how="left",
-                  on="STATE_COUNTY")["state_county_gb"]
-    test_df["state_gb"] = \
-    test_df.merge(train_df[["state_gb", 'STATE']], how="left", on="STATE")[
+def state_county_features_test(test_gdf, train_gdf):
+    test_gdf["STATE_COUNTY"] = test_gdf["STATE"] + "_" + test_gdf["COUNTY"]
+    test_gdf["state_county_gb"] = \
+    test_gdf.merge(train_gdf[["STATE_COUNTY", "state_county_gb"]].drop_duplicates(), how="left",
+                   on="STATE_COUNTY")["state_county_gb"]
+    test_gdf["state_gb"] = \
+    test_gdf.merge(train_gdf[["state_gb", 'STATE']].drop_duplicates(), how="left", on="STATE")[
         "state_gb"]
     return ["state_county_gb", "state_gb"]
 
@@ -194,110 +196,38 @@ def print_feature_importance(rf_model):
                                 importances[sorted_indices[f]]))
 
 
-def fire_duration_feature(train_gdf):
-    # splitting train for empty and non empty rows
-    full_times = train_gdf.dropna(
-        subset=["disc_date_dt", "DISCOVERY_TIME", "cont_date_dt", "CONT_TIME"])
-
-    # creating date columns with hours
-    full_times["cont_timestamp"] = full_times["cont_date_dt"].astype(str) + " " + full_times[
-        "CONT_TIME"].astype(str).apply(lambda row: row[:2] + ":" + row[2:])
-    full_times["disc_timestamp"] = full_times["disc_date_dt"].astype(str) + " " + \
-                                  full_times["DISCOVERY_TIME"].astype(str).apply(
-                                      lambda row: row[:2] + ":" + row[2:])
-
-    full_times["cont_timestamp"] = pd.to_datetime(full_times["cont_timestamp"])
-    full_times["disc_timestamp"] = pd.to_datetime(full_times["disc_timestamp"])
-
-    # duration in minutes
-    full_times["fire_duration_min"] = full_times.apply(lambda row: pd.Timedelta(
-        row["cont_timestamp"] - row["disc_timestamp"]).seconds / 60.0,
-                                           axis=1)
-    # calculating average per group [month, weekday ,state, fire size class]
-    group_cols = ["disc_mon", "disc_dow", "STATE", "FIRE_SIZE_CLASS"]
-    avg_df = full_times.groupby(group_cols).mean(["fire_duration_min"]).reset_index()
-
-    # merging averages and full times with train gdf
-    train_gdf["avg_fire_duration_min"] = train_gdf.merge(avg_df, on=group_cols, how='left')["fire_duration_min"]
-    train_gdf["fire_duration_min"] = train_gdf.join(full_times, lsuffix='_caller', rsuffix='_other')["fire_duration_min"]
-    train_gdf["fire_duration_min"] = train_gdf["fire_duration_min"].combine_first(train_gdf["avg_fire_duration_min"])
-
-    return ["fire_duration_min"]
-
-
-def fire_duration_feature_test(test_gdf, train_gdf):
-    # splitting test for empty and non empty rows
-    full_times = test_gdf.dropna(
-        subset=["disc_date_dt", "DISCOVERY_TIME", "cont_date_dt", "CONT_TIME"])
-
-    # creating date columns with hours
-    full_times["cont_timestamp"] = full_times["cont_date_dt"].astype(
-        str) + " " + full_times[
-                                       "CONT_TIME"].astype(str).apply(
-        lambda row: row[:2] + ":" + row[2:])
-    full_times["disc_timestamp"] = full_times["disc_date_dt"].astype(
-        str) + " " + \
-                                   full_times["DISCOVERY_TIME"].astype(
-                                       str).apply(
-                                       lambda row: row[:2] + ":" + row[2:])
-
-    full_times["cont_timestamp"] = pd.to_datetime(full_times["cont_timestamp"])
-    full_times["disc_timestamp"] = pd.to_datetime(full_times["disc_timestamp"])
-
-    # duration in minutes
-    full_times["fire_duration_min"] = full_times.apply(
-        lambda row: pd.Timedelta(
-            row["cont_timestamp"] - row["disc_timestamp"]).seconds / 60.0,
-        axis=1)
-
-    # calculating average per group [month, weekday ,state, fire size class]
-    group_cols = ["disc_mon", "disc_dow", "STATE", "FIRE_SIZE_CLASS"]
-
-    # calculating average on train df because it contains more info
-    avg_df = train_gdf.groupby(group_cols).mean(["fire_duration_min"]).reset_index()
-
-    # merging averages and full times with train gdf
-    test_gdf["avg_fire_duration_min"] = \
-    test_gdf.merge(avg_df, on=group_cols, how='left')["fire_duration_min"]
-    test_gdf["fire_duration_min"] = \
-    test_gdf.join(full_times, lsuffix='_caller', rsuffix='_other')[
-        "fire_duration_min"]
-    test_gdf["fire_duration_min"] = test_gdf[
-        "fire_duration_min"].combine_first(test_gdf["avg_fire_duration_min"])
-
-    return ["fire_duration_min"]
-
 def extract_features_train(train_gdf):
     """function performs all basic data manipulations that are needed on both train and test dataframe"""
-    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY",
-                          "FIRE_SIZE"]  # , "FIRE_SIZE_CLASS"]
+    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY", "FIRE_SIZE"]#, "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(train_gdf)
-    state_county_features = [] # state_county_features_train(train_gdf)
-    fire_duration = fire_duration_feature(train_gdf)
-    return basic_features_lst + date_features_lst + state_county_features + fire_duration
+    state_county_features = []  # state_county_features_train(train_gdf)
+    return basic_features_lst + date_features_lst + state_county_features
 
 
 def extract_features_test(test_gdf, train_gdf):
     """function performs all basic data manipulations that are needed on both train and test dataframe"""
-    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY",
-                          "FIRE_SIZE"]  # , "FIRE_SIZE_CLASS"]
+    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY", "FIRE_SIZE"]#, "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(test_gdf)
-    state_county_features = [] # state_county_features_test(test_gdf, train_gdf)
-    fire_duration = fire_duration_feature_test(test_gdf, train_gdf)
-    return basic_features_lst + date_features_lst + state_county_features + fire_duration
+    state_county_features = []  # state_county_features_test(test_gdf, train_gdf)
+    return basic_features_lst + date_features_lst + state_county_features
 
 
 def fit_model(X, y):
-    # to fill
-    # HyperParmaeter selection, etc
-    trained_model = None
-    return trained_model
+    model = RandomForestClassifier(random_state=10)
+
+    dists = {
+        'n_estimators': randint(2, 256),
+        'min_samples_leaf': randint(2, 16),
+        'min_samples_split': randint(2, 32)
+    }
+
+    rs = RandomizedSearchCV(estimator=model, param_distributions=dists, cv=5, verbose=1, scoring=make_scorer(balanced_accuracy_score), n_iter=n_configs)
+    rs.fit(X, y)
+    return rs.best_estimator_
 
 
 def predict_results(X_test, model):
-    pass
-    # return model.predict
-
+    return model.predict
 
 def main():
     # fill me
@@ -322,5 +252,3 @@ def main():
 # Micha:
 # Geo Features + External Features
 # Geo Graphs for EDA
-
-
