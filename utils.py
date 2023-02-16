@@ -14,6 +14,10 @@ from sklearn.metrics import classification_report
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
 OID_FIELD = "OBJECTID"
+null_columns = ['ICS_209_INCIDENT_NUMBER', 'ICS_209_NAME', 'MTBS_ID', 'MTBS_FIRE_NAME', 'COMPLEX_NAME']
+leakadge_columns = ['FIRE_NAME', 'NWCG_REPORTING_AGENCY', 'NWCG_REPORTING_UNIT_ID', 'NWCG_REPORTING_UNIT_ID', 'SOURCE_REPORTING_UNIT_NAME',
+                       'ICS209NAME']
+id_columns = ['OBJECTID', 'FOD_ID', 'FPA_ID']
 
 
 def create_dataframe():
@@ -60,16 +64,19 @@ def date_features(df):
 
 
 def aggregative_features(df):
-    # frequency of a month
-    months = df["disc_mon"].value_counts().reset_index().rename(columns={"index": "disc_mon", "disc_mon": "amount"})
-    months["frequency"] = months["amount"] / df.shape[0]
-    df = pd.merge(df, months, left_on=["disc_mon"], right_on=["disc_mon"])
-    features = ["month_frequency"]
+    # frequency per month
+    months_stats = df["DISCOVERY_MONTH"].value_counts().reset_index().rename(columns={"index":"DISCOVERY_MONTH", "DISCOVERY_MONTH":"MONTH_FREQ"})
+    months_stats["MONTH_FREQ"] = months_stats["MONTH_FREQ"] / df.shape[0]
+    df = pd.merge(df, months_stats, left_on = ["DISCOVERY_MONTH"], right_on = ["DISCOVERY_MONTH"])
+    # frquency per day of week
+    weekday_stats = df["DISCOVERY_WEEKDAY"].value_counts().reset_index().rename(columns={"index":"DISCOVERY_WEEKDAY", "DISCOVERY_WEEKDAY":"WEEKDAY_FREQ"})
+    weekday_stats["WEEKDAY_FREQ"] = weekday_stats["WEEKDAY_FREQ"] / df.shape[0]
+    df = pd.merge(df, weekday_stats, left_on = ["DISCOVERY_WEEKDAY"], right_on = ["DISCOVERY_WEEKDAY"])
     return df
+
 
 def geo_vector_features(df, external_vector_gdfs, is_poly=False):
     gdf = df_to_gdf(df)
-
     features = []
     for external_gdf, name_of_data, geo_oid_field in external_vector_gdfs:
         gdf[f"distances_{name_of_data}"] = \
@@ -115,9 +122,6 @@ def state_county_features_test(test_df, train_df):
 def df_to_gdf(df):
     gdf = gpd.GeoDataFrame(
         df, geometry=gpd.points_from_xy(df.LONGITUDE, df.LATITUDE), crs=4269)
-    gdf['LATITUDE_NAD83'] = gdf['LATITUDE']
-    gdf['LONGITUDE_NAD83'] = gdf['LONGITUDE']
-    gdf['POINT_GEOMETRY_NAD83'] = gdf.geometry
     gdf = gdf.to_crs(4326)
     gdf['LATITUDE'] = gdf.geometry.y
     gdf['LONGITUDE'] = gdf.geometry.x
@@ -126,13 +130,7 @@ def df_to_gdf(df):
     return gdf
 
 
-def feature_extraction_noa(df):
-    # add dummies
-    dummy_cols = ["NWCG_REPORTING_AGENCY", "SOURCE_SYSTEM_TYPE"]
-    if "Shape" in df.columns:
-        df.drop(columns=["Shape"], inplace=True)
-    df = pd.get_dummies(df,columns=dummy_cols)
-    # encode of FIRE_SIZE_CLASS feature
+def fire_size_class_to_num(df):
     df["FIRE_SIZE_CLASS"] = df["FIRE_SIZE_CLASS"].map({"A": 1, "B": 2, "C": 3, "D": 4, "E": 5, "F" : 6, "G":7})
     return df
 
@@ -161,44 +159,14 @@ def weather_normal_features(gdf, data_path):
             bil_file = os.path.join(data_path, dir_name, WEATHER_FILES_MAP[dir_name].format(month))
             raster_files[feat][month] = rasterio.open(bil_file)
 
-    def create_weather_features(row):
-        month_str = row['disc_date_dt'].strftime("%m")
-        results = []
-        for feature in WEATHER_FEATURES_MAP:
-            data_value = list(raster_files[feature][month_str].sample([(row['LONGITUDE_NAD83'], row['LATITUDE_NAD83'])]))
-            results.append(data_value[0][0])
-        return results
 
-    gdf[list(WEATHER_FEATURES_MAP.keys())] = gdf.apply(create_weather_features, axis=1, result_type='expand')
-
-def extract_features(df, train_df=None):
-    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY"]
-    date_features_lst = date_features(df)
-    if train_df:
-        state_county_features = state_county_features_test(df, train_df)
-    else:
-        state_county_features = state_county_features_train(df)
-    return basic_features_lst + date_features_lst + state_county_features
-
-
-def run_model(df):
-    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY"]
-    date_features_lst = date_features(df)
-
-    X, y = df[date_features_lst + basic_features_lst], df[LABEL_FIELD]
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.3)
-    # aggregative_features(X_train, X_test)
-    X_train.drop(columns=["STATE", "COUNTY", "STATE_COUNTY"], inplace=True)
-    X_test.drop(columns=["STATE", "COUNTY", "STATE_COUNTY"], inplace=True)
-
-    clf_multi = RandomForestClassifier()
-    clf_multi.fit(X_train, y_train)
-
-    print("train score ", clf_multi.score(X_train, y_train))
-    print("test score ", clf_multi.score(X_test, y_test))
-
-    y_test, preds = y_test, clf_multi.predict(X_test)
-    print(classification_report(y_test, preds))
+def create_weather_features(row):
+    month_str = row['DISCOVERY_DATE'].strftime("%m")
+    results = []
+    for feature in WEATHER_FEATURES_MAP:
+        data_value = list(raster_files[feature][month_str].sample([(row['LONGITUDE_NAD83'], row['LATITUDE_NAD83'])]))
+        results.append(data_value[0][0])
+    return results
 
 
 def print_feature_importance(rf_model):
@@ -209,3 +177,56 @@ def print_feature_importance(rf_model):
         print("%2d) %-*s %f" % (f + 1, 30,
                                 feat_labels[sorted_indices[f]],
                                 importances[sorted_indices[f]]))
+
+def extract_features_train(train_gdf):
+    """function performs all basic data manipulations that are needed on both train and test dataframe"""
+    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY", "FIRE_SIZE"]#, "FIRE_SIZE_CLASS"]
+    date_features_lst = date_features(train_gdf)
+    state_county_features = [] # state_county_features_train(train_gdf)
+    return basic_features_lst + date_features_lst + state_county_features
+
+def extract_features_test(test_gdf, train_gdf):
+    """function performs all basic data manipulations that are needed on both train and test dataframe"""
+    basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY", "FIRE_SIZE"]#, "FIRE_SIZE_CLASS"]
+    date_features_lst = date_features(test_gdf)
+    state_county_features = [] # state_county_features_test(test_gdf, train_gdf)
+    return basic_features_lst + date_features_lst + state_county_features
+
+
+def fit_model(X, y):
+    #to fill
+    # HyperParmaeter selection, etc
+    trained_model = None
+    return trained_model
+
+
+def predict_results(X_test, model):
+    pass
+    #return model.predict
+
+
+def main():
+    # fill me
+    train_df = create_dataframe()
+    train_df = train_df[100:]
+    test_df = train_df[:100]
+    train_gdf, test_gdf = df_to_gdf(train_df), df_to_gdf(test_df)
+    train_features, test_features = extract_features_train(train_gdf),\
+                                    extract_features_test(test_gdf, train_gdf)
+    model = fit_model(train_gdf[train_features], train_gdf[LABEL_FIELD])
+    test_results = predict_results(test_gdf[test_features], model)
+
+# Noa:
+# Cont time
+# Exploratory Data Analysis
+# Document
+#
+# Tamar:
+# State County Features
+# Model
+#
+# Micha:
+# Geo Features + External Features
+# Geo Graphs for EDA
+
+
