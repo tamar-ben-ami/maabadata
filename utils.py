@@ -65,13 +65,13 @@ def date_features(df):
 
 def aggregative_features(df):
     # frequency per month
-    months_stats = df["DISCOVERY_MONTH"].value_counts().reset_index().rename(columns={"index":"DISCOVERY_MONTH", "DISCOVERY_MONTH":"MONTH_FREQ"})
-    months_stats["MONTH_FREQ"] = months_stats["MONTH_FREQ"] / df.shape[0]
-    df = pd.merge(df, months_stats, left_on = ["DISCOVERY_MONTH"], right_on = ["DISCOVERY_MONTH"])
+    months_stats = df["disc_mon"].value_counts().reset_index().rename(columns={"index":"disc_mon", "disc_mon":"month_freq"})
+    months_stats["month_freq"] = months_stats["month_freq"] / df.shape[0]
+    df = pd.merge(df, months_stats, left_on = ["disc_mon"], right_on = ["disc_mon"])
     # frquency per day of week
-    weekday_stats = df["DISCOVERY_WEEKDAY"].value_counts().reset_index().rename(columns={"index":"DISCOVERY_WEEKDAY", "DISCOVERY_WEEKDAY":"WEEKDAY_FREQ"})
-    weekday_stats["WEEKDAY_FREQ"] = weekday_stats["WEEKDAY_FREQ"] / df.shape[0]
-    df = pd.merge(df, weekday_stats, left_on = ["DISCOVERY_WEEKDAY"], right_on = ["DISCOVERY_WEEKDAY"])
+    weekday_stats = df["disc_dow"].value_counts().reset_index().rename(columns={"index":"disc_dow", "disc_dow":"weekday_freq"})
+    weekday_stats["weekday_freq"] = weekday_stats["weekday_freq"] / df.shape[0]
+    df = pd.merge(df, weekday_stats, left_on = ["disc_dow"], right_on = ["disc_dow"])
     return df
 
 
@@ -178,19 +178,95 @@ def print_feature_importance(rf_model):
                                 feat_labels[sorted_indices[f]],
                                 importances[sorted_indices[f]]))
 
+
+def fire_duration_feature(train_gdf):
+    # splitting train for empty and non empty rows
+    full_times = train_gdf.dropna(
+        subset=["disc_date_dt", "DISCOVERY_TIME", "cont_date_dt", "CONT_TIME"])
+
+    # creating date columns with hours
+    full_times["cont_timestamp"] = full_times["cont_date_dt"].astype(str) + " " + full_times[
+        "CONT_TIME"].astype(str).apply(lambda row: row[:2] + ":" + row[2:])
+    full_times["disc_timestamp"] = full_times["disc_date_dt"].astype(str) + " " + \
+                                  full_times["DISCOVERY_TIME"].astype(str).apply(
+                                      lambda row: row[:2] + ":" + row[2:])
+
+    full_times["cont_timestamp"] = pd.to_datetime(full_times["cont_timestamp"])
+    full_times["disc_timestamp"] = pd.to_datetime(full_times["disc_timestamp"])
+
+    # duration in minutes
+    full_times["fire_duration_min"] = full_times.apply(lambda row: pd.Timedelta(
+        row["cont_timestamp"] - row["disc_timestamp"]).seconds / 60.0,
+                                           axis=1)
+    # calculating average per group [month, weekday ,state, fire size class]
+    group_cols = ["disc_mon", "disc_dow", "STATE", "FIRE_SIZE_CLASS"]
+    avg_df = full_times.groupby(group_cols).mean(["fire_duration_min"]).reset_index()
+
+    # merging averages and full times with train gdf
+    train_gdf["avg_fire_duration_min"] = train_gdf.merge(avg_df, on=group_cols, how='left')["fire_duration_min"]
+    train_gdf["fire_duration_min"] = train_gdf.join(full_times, lsuffix='_caller', rsuffix='_other')["fire_duration_min"]
+    train_gdf["fire_duration_min"] = train_gdf["fire_duration_min"].combine_first(train_gdf["avg_fire_duration_min"])
+
+    return ["fire_duration_min"]
+
+
+def fire_duration_feature_test(test_gdf, train_gdf):
+    # splitting test for empty and non empty rows
+    full_times = test_gdf.dropna(
+        subset=["disc_date_dt", "DISCOVERY_TIME", "cont_date_dt", "CONT_TIME"])
+
+    # creating date columns with hours
+    full_times["cont_timestamp"] = full_times["cont_date_dt"].astype(
+        str) + " " + full_times[
+                                       "CONT_TIME"].astype(str).apply(
+        lambda row: row[:2] + ":" + row[2:])
+    full_times["disc_timestamp"] = full_times["disc_date_dt"].astype(
+        str) + " " + \
+                                   full_times["DISCOVERY_TIME"].astype(
+                                       str).apply(
+                                       lambda row: row[:2] + ":" + row[2:])
+
+    full_times["cont_timestamp"] = pd.to_datetime(full_times["cont_timestamp"])
+    full_times["disc_timestamp"] = pd.to_datetime(full_times["disc_timestamp"])
+
+    # duration in minutes
+    full_times["fire_duration_min"] = full_times.apply(
+        lambda row: pd.Timedelta(
+            row["cont_timestamp"] - row["disc_timestamp"]).seconds / 60.0,
+        axis=1)
+
+    # calculating average per group [month, weekday ,state, fire size class]
+    group_cols = ["disc_mon", "disc_dow", "STATE", "FIRE_SIZE_CLASS"]
+
+    # calculating average on train df because it contains more info
+    avg_df = train_gdf.groupby(group_cols).mean(["fire_duration_min"]).reset_index()
+
+    # merging averages and full times with train gdf
+    test_gdf["avg_fire_duration_min"] = \
+    test_gdf.merge(avg_df, on=group_cols, how='left')["fire_duration_min"]
+    test_gdf["fire_duration_min"] = \
+    test_gdf.join(full_times, lsuffix='_caller', rsuffix='_other')[
+        "fire_duration_min"]
+    test_gdf["fire_duration_min"] = test_gdf[
+        "fire_duration_min"].combine_first(test_gdf["avg_fire_duration_min"])
+
+    return ["fire_duration_min"]
+
 def extract_features_train(train_gdf):
     """function performs all basic data manipulations that are needed on both train and test dataframe"""
     basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY", "FIRE_SIZE"]#, "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(train_gdf)
     state_county_features = [] # state_county_features_train(train_gdf)
-    return basic_features_lst + date_features_lst + state_county_features
+    fire_duration = fire_duration_feature(train_gdf)
+    return basic_features_lst + date_features_lst + state_county_features + fire_duration
 
 def extract_features_test(test_gdf, train_gdf):
     """function performs all basic data manipulations that are needed on both train and test dataframe"""
     basic_features_lst = ["LONGITUDE", "LATITUDE", "STATE", "COUNTY", "FIRE_SIZE"]#, "FIRE_SIZE_CLASS"]
     date_features_lst = date_features(test_gdf)
     state_county_features = [] # state_county_features_test(test_gdf, train_gdf)
-    return basic_features_lst + date_features_lst + state_county_features
+    fire_duration = fire_duration_feature_test(test_gdf, train_gdf)
+    return basic_features_lst + date_features_lst + state_county_features + fire_duration
 
 
 def fit_model(X, y):
@@ -208,7 +284,7 @@ def predict_results(X_test, model):
 def main():
     # fill me
     train_df = create_dataframe()
-    train_df = train_df[100:]
+    train_df = train_df[100:10000]
     test_df = train_df[:100]
     train_gdf, test_gdf = df_to_gdf(train_df), df_to_gdf(test_df)
     train_features, test_features = extract_features_train(train_gdf),\
@@ -230,3 +306,4 @@ def main():
 # Geo Graphs for EDA
 
 
+main()
