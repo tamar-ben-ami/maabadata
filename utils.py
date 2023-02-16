@@ -260,4 +260,3 @@ def fit_model(X, y):
 def predict_results(X_test, model):
     X_test = X_test.fillna(0)
     return model.predict(X_test)
-
