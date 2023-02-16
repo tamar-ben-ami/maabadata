@@ -1,3 +1,19 @@
+DATA_PATH = r"C:\Users\Micha\Documents\HUJI\Competitive\Project\MapProject\Data"
+
+LAYERS = {"electricity_transition_lines": r"Electricity\Electric__Power_Transmission_Lines_WGS84.shp",
+          "electricity_power_plants": r"Electricity\Power_Plants_WGS84.shp",
+          "indian_reserves": r"IndianReserves\tl_2018_us_aiannh_WGS84.shp",
+          "military_bases": r"Military\Military_Bases_WGS84.shp",
+          "national_parks": r"NationalParks\NPS_-_Land_Resources_Division_Boundary_and_Tract_Data_Service_WGS84.shp",
+          "transportation_amtrak_stations": r"Transportation\Amtrak_Stations_WGS84.shp",
+          "transportation_rail_network_lines": r"Transportation\North_American_Rail_Network_Lines_WGS84.shp",
+          "transportation_rail_network_nodes": r"Transportation\North_American_Rail_Network_Nodes_WGS84.shp",
+          "transportation_railroad_bridges": r"Transportation\Railroad_Bridges_WGS84.shp",
+          "transportation_railroad_grade_crossings": r"Transportation\Railroad_Grade_Crossings_WGS84.shp",
+          "water_bodies": r"Water\USA_Detailed_Water_Bodies_WGS84.shp",
+          "urban_areas": r"UrbanAreas\tl_2019_us_uac10_WGS84.shp"}
+
+# weather rasters
 ppt_dir_name = "Percipitation"
 tmean_dir_name = "MeanTemperature"
 tmin_dir_name = "MinTemperature"
@@ -22,7 +38,7 @@ soltotal_file_name = "PRISM_soltotal_30yr_normal_4kmM3_{}_bil.bil"
 solslope_file_name = "PRISM_solslope_30yr_normal_4kmM3_{}_bil.bil"
 soltrans_file_name = "PRISM_soltrans_30yr_normal_4kmM3_{}_bil.bil"
 
-WEATHER_FEATURES_MAP = {"percipitation": ppt_dir_name,
+WEATHER_FEATURES_MAP = {"precipitation": ppt_dir_name,
                         "mean_temp": tmean_dir_name,
                         "min_temp": tmin_dir_name,
                         "max_temp": tmax_dir_name,

@@ -100,31 +100,19 @@ def aggregative_features_test(test_gdf, train_gdf):
     return ['month_freq', 'weekday_freq']
 
 
-def geo_vector_features(df, external_vector_gdfs, is_poly=False):
-    gdf = df_to_gdf(df)
+def geo_vector_features(gdf):
     features = []
-    for external_gdf, name_of_data, geo_oid_field in external_vector_gdfs:
-        gdf[f"distances_{name_of_data}"] = \
-            gpd.sjoin_nearest(gdf, external_gdf, how='left', lsuffix='left',
-                              rsuffix='right',
-                              distance_col=f"distances_{name_of_data}")[
-                f"distances_{name_of_data}"]
-        features.append(f"distances_{name_of_data}")
-        df[f"distances_{name_of_data}"] = \
-            df[[OID_FIELD]].merge(
-                gdf[[OID_FIELD, f"distances_{name_of_data}"]],
-                left_on=OID_FIELD, right_on=OID_FIELD)[
-                f"distances_{name_of_data}"]
-        # Gdf with polygons!
-        # if is_poly:
-        #     gs = gpd.sjoin(gdf, external_gdf, how='left', predicate="intersects",
-        #               lsuffix='left', rsuffix='right').groupby(
-        #         OID_FIELD)[geo_oid_field].size().rename(f"count_intersections_{name_of_data}")
-        #     gdf = gdf.merge(gs, how="left", left_on=OID_FIELD, right_index=True)
-        #     features.append(f"count_intersections_{name_of_data}")
-
-    return features
-
+    for name_of_data in LAYERS:
+        features.append(name_of_data)
+        print(name_of_data)
+        path = os.path.join(DATA_PATH, LAYERS[name_of_data])
+        external_gdf = gpd.read_file(path, crs="EPSG:4326")[['geometry']].drop_duplicates()
+        distances = gpd.sjoin_nearest(gdf, external_gdf, how='left', lsuffix='left',
+                                      rsuffix='right',
+                                      distance_col=f"distances_{name_of_data}")
+        distances.drop_duplicates(subset=[OID_FIELD], inplace=True)
+        gdf = gdf.merge(distances[[OID_FIELD, f"distances_{name_of_data}"]], on=OID_FIELD, how='left')
+    return gdf, features
 
 def state_county_features_train(train_df):
     features = ["state_county_gb", "state_gb"]
@@ -190,25 +178,24 @@ def get_elevation(gdf):
     return pd.concat(elavation_dfs)['elevation']
 
 
-def weather_normal_features(gdf, data_path):
+def weather_normal_features(gdf):
     raster_files = {}
     for feat, dir_name in WEATHER_FEATURES_MAP.items():
         raster_files[feat] = {}
         for i in range(1, 13):
             month = str(i) if i >= 10 else f'0{i}'
-            bil_file = os.path.join(data_path, dir_name,
-                                    WEATHER_FILES_MAP[dir_name].format(month))
+            bil_file = os.path.join(DATA_PATH, dir_name, WEATHER_FILES_MAP[dir_name].format(month))
             raster_files[feat][month] = rasterio.open(bil_file)
 
+    def create_weather_features(row):
+        month_str = row['DISCOVERY_DATE'].strftime("%m")
+        results = []
+        for feature in WEATHER_FEATURES_MAP:
+            data_value = list(raster_files[feature][month_str].sample([(row['LONGITUDE_NAD83'], row['LATITUDE_NAD83'])]))
+            results.append(data_value[0][0])
+        return results
 
-def create_weather_features(row):
-    month_str = row['DISCOVERY_DATE'].strftime("%m")
-    results = []
-    for feature in WEATHER_FEATURES_MAP:
-        data_value = list(raster_files[feature][month_str].sample(
-            [(row['LONGITUDE_NAD83'], row['LATITUDE_NAD83'])]))
-        results.append(data_value[0][0])
-    return results
+    gdf[list(WEATHER_FEATURES_MAP.keys())] = gdf.apply(create_weather_features, axis=1, result_type='expand')
 
 
 def print_feature_importance(rf_model):
