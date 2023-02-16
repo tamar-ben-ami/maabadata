@@ -4,14 +4,9 @@ import numpy as np
 import rasterio
 import requests
 import sqlite3
-from shapely.wkt import loads
 from config import *
 import os
-from sklearn.model_selection import train_test_split, RandomizedSearchCV
 from sklearn.ensemble import RandomForestClassifier
-from sklearn.metrics import classification_report, make_scorer, \
-    balanced_accuracy_score
-from scipy.stats import randint
 import plotly.express as px
 
 LABEL_FIELD = "STAT_CAUSE_CODE"
@@ -330,9 +325,9 @@ def extract_features_test(test_gdf, train_gdf):
 
 def fit_model(X, y):
     X = X.fillna(0)
-    # model = RandomForestClassifier(random_state=10, min_samples_leaf=2,
-    #                                min_samples_split=30, n_estimators=203)
-    model = RandomForestClassifier(random_state=10)
+    model = RandomForestClassifier(random_state=10, min_samples_leaf=2,
+                                   min_samples_split=30, n_estimators=203)
+    # model = RandomForestClassifier(random_state=10)
     model.fit(X, y)
     return model
 
